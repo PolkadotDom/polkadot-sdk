@@ -54,7 +54,7 @@ use frame_support::{
 		},
 		tokens::{
 			imbalance::ResolveAssetTo, nonfungibles_v2::Inspect, pay::PayAssetFromAccount,
-			GetSalary, PayFromAccount,
+			GetPerBlockSalary, PayFromAccount,
 		},
 		AsEnsureOriginWithArg, ConstBool, ConstU128, ConstU16, ConstU32, ConstU64, Contains,
 		Currency, EitherOfDiverse, EnsureOriginWithArg, EqualPrivilegeOnly, Imbalance, InsideBoth,
@@ -1962,7 +1962,7 @@ parameter_types! {
 }
 
 pub struct SalaryForRank;
-impl GetSalary<u16, AccountId, Balance> for SalaryForRank {
+impl GetPerBlockSalary<u16, AccountId, Balance> for SalaryForRank {
 	fn get_salary(a: u16, _: &AccountId) -> Balance {
 		Balance::from(a) * 1000 * DOLLARS
 	}
@@ -1973,7 +1973,7 @@ impl pallet_salary::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type Paymaster = PayFromAccount<Balances, TreasuryAccount>;
 	type Members = RankedCollective;
-	type Salary = SalaryForRank;
+	type PerBlockSalary = SalaryForRank;
 	type RegistrationPeriod = ConstU32<200>;
 	type PayoutPeriod = ConstU32<200>;
 	type Budget = Budget;

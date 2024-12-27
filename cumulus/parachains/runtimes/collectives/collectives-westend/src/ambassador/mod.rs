@@ -259,9 +259,9 @@ impl pallet_salary::Config<AmbassadorSalaryInstance> for Runtime {
 	type Members = pallet_ranked_collective::Pallet<Runtime, AmbassadorCollectiveInstance>;
 
 	#[cfg(not(feature = "runtime-benchmarks"))]
-	type Salary = pallet_core_fellowship::Pallet<Runtime, AmbassadorCoreInstance>;
+	type PerBlockSalary = pallet_core_fellowship::Pallet<Runtime, AmbassadorCoreInstance>;
 	#[cfg(feature = "runtime-benchmarks")]
-	type Salary = frame_support::traits::tokens::ConvertRank<
+	type PerBlockSalary = frame_support::traits::tokens::ConvertRank<
 		crate::impls::benchmarks::RankToSalary<Balances>,
 	>;
 	// 15 days to register for a salary payment.

@@ -24,7 +24,7 @@ use frame_support::{
 	assert_noop, assert_ok, derive_impl, hypothetically, ord_parameter_types,
 	pallet_prelude::Weight,
 	parameter_types,
-	traits::{tokens::GetSalary, ConstU32, IsInVec, TryMapSuccess},
+	traits::{tokens::GetPerBlockSalary, ConstU32, IsInVec, TryMapSuccess},
 };
 use frame_system::EnsureSignedBy;
 use sp_runtime::{bounded_vec, traits::TryMorphInto, BuildStorage, DispatchError, DispatchResult};

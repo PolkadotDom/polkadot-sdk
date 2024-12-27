@@ -343,16 +343,16 @@ impl<CollectionId, ItemId> Locker<CollectionId, ItemId> for () {
 	}
 }
 
-/// Retrieve the salary for a member of a particular rank.
-pub trait GetSalary<Rank, AccountId, Balance> {
-	/// Retrieve the salary for a given rank. The account ID is also supplied in case this changes
+/// Retrieve the per block salary for a member of a particular rank.
+pub trait GetPerBlockSalary<Rank, AccountId, Balance> {
+	/// Retrieve the per block salary for a given rank. The account ID is also supplied in case this changes
 	/// things.
 	fn get_salary(rank: Rank, who: &AccountId) -> Balance;
 }
 
-/// Adapter for a rank-to-salary `Convert` implementation into a `GetSalary` implementation.
+/// Adapter for a rank-to-salary `Convert` implementation into a `GetPerBlockSalary` implementation.
 pub struct ConvertRank<C>(core::marker::PhantomData<C>);
-impl<A, R, B, C: Convert<R, B>> GetSalary<R, A, B> for ConvertRank<C> {
+impl<A, R, B, C: Convert<R, B>> GetPerBlockSalary<R, A, B> for ConvertRank<C> {
 	fn get_salary(rank: R, _: &A) -> B {
 		C::convert(rank)
 	}

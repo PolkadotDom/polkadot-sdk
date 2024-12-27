@@ -103,7 +103,7 @@ impl Config for Test {
 }
 
 pub struct FixedSalary;
-impl GetSalary<u16, u64, u64> for FixedSalary {
+impl GetPerBlockSalary<u16, u64, u64> for FixedSalary {
 	fn get_salary(_rank: u16, _who: &u64) -> u64 {
 		123
 	}

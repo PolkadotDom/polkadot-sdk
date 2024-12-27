@@ -20,7 +20,7 @@ use super::{mock::*, *};
 
 use frame_support::{
 	assert_ok,
-	traits::{tokens::GetSalary, RankedMembers},
+	traits::{tokens::GetPerBlockSalary, RankedMembers},
 };
 use sp_runtime::{traits::ConvertToValue, DispatchResult};
 
@@ -98,7 +98,7 @@ parameter_types! {
 }
 
 pub struct FixedSalary;
-impl GetSalary<Rank, AccountId, Balance> for FixedSalary {
+impl GetPerBlockSalary<Rank, AccountId, Balance> for FixedSalary {
 	fn get_salary(_rank: Rank, _who: &AccountId) -> Balance {
 		FixedSalaryAmount::get()
 	}
@@ -109,7 +109,7 @@ impl pallet_salary::Config for Test {
 	type RuntimeEvent = RuntimeEvent;
 	type Paymaster = SalaryPayOverXcm;
 	type Members = TestClub;
-	type Salary = FixedSalary;
+	type PerBlockSalary = FixedSalary;
 	type RegistrationPeriod = RegistrationPeriod;
 	type PayoutPeriod = PayoutPeriod;
 	type Budget = Budget;

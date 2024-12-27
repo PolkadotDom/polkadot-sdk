@@ -166,7 +166,7 @@ pub mod pallet {
 	use frame_support::{
 		dispatch::Pays,
 		pallet_prelude::*,
-		traits::{tokens::GetSalary, EnsureOrigin},
+		traits::{tokens::GetPerBlockSalary, EnsureOrigin},
 	};
 	use frame_system::{ensure_root, pallet_prelude::*};
 	/// The in-code storage version.
@@ -680,7 +680,7 @@ pub mod pallet {
 		}
 	}
 
-	impl<T: Config<I>, I: 'static> GetSalary<RankOf<T, I>, T::AccountId, T::Balance> for Pallet<T, I> {
+	impl<T: Config<I>, I: 'static> GetPerBlockSalary<RankOf<T, I>, T::AccountId, T::Balance> for Pallet<T, I> {
 		fn get_salary(rank: RankOf<T, I>, who: &T::AccountId) -> T::Balance {
 			let index = match Self::rank_to_index(rank) {
 				Some(i) => i,

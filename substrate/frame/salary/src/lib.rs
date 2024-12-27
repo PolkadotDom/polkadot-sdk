@@ -30,7 +30,7 @@ use frame_support::{
 	dispatch::DispatchResultWithPostInfo,
 	ensure,
 	traits::{
-		tokens::{GetSalary, Pay, PaymentStatus},
+		tokens::{GetPerBlockSalary, Pay, PaymentStatus},
 		RankedMembers, RankedMembersSwapHandler,
 	},
 };
@@ -110,10 +110,11 @@ pub mod pallet {
 		/// The current membership of payees.
 		type Members: RankedMembers<AccountId = <Self as frame_system::Config>::AccountId>;
 
-		/// The maximum payout to be made for a single period to an active member of the given rank.
+		/// The amount an active member of the given rank makes per block.
+		/// Maximum possible cycle payout is determined by (cycle length * per block salary).
 		///
 		/// The benchmarks require that this be non-zero for some rank at most 255.
-		type Salary: GetSalary<
+		type PerBlockSalary: GetPerBlockSalary<
 			<Self::Members as RankedMembers>::Rank,
 			Self::AccountId,
 			<Self::Paymaster as Pay>::Balance,
@@ -133,6 +134,9 @@ pub mod pallet {
 		/// `RegistrationPeriod`.
 		#[pallet::constant]
 		type PayoutPeriod: Get<BlockNumberFor<Self>>;
+
+		#[pallet::constant]
+		type BlocksInPeriod: Get<<Self::Paymaster as Pay>::Balance>;
 
 		/// The total budget per cycle.
 		///
@@ -292,7 +296,8 @@ pub mod pallet {
 				Error::<T, I>::TooLate
 			);
 			ensure!(claimant.last_active < status.cycle_index, Error::<T, I>::NoClaim);
-			let payout = T::Salary::get_salary(rank, &who);
+			let cycle_length = T::BlocksInPeriod::get();
+			let payout = T::PerBlockSalary::get_salary(rank, &who).saturating_mul(cycle_length);
 			ensure!(!payout.is_zero(), Error::<T, I>::ClaimZero);
 			claimant.last_active = status.cycle_index;
 			claimant.status = Registered(payout);
@@ -418,7 +423,9 @@ pub mod pallet {
 				Nothing | Attempted { .. } if claimant.last_active < status.cycle_index => {
 					// Not registered for this cycle. Pay from whatever is left.
 					let rank = T::Members::rank_of(&who).ok_or(Error::<T, I>::NotMember)?;
-					let ideal_payout = T::Salary::get_salary(rank, &who);
+					let cycle_length = T::BlocksInPeriod::get();
+					let ideal_payout = T::PerBlockSalary::get_salary(rank, &who)
+						.saturating_mul(cycle_length);
 
 					let pot = status
 						.budget
@@ -460,11 +467,11 @@ impl<T: Config<I>, I: 'static>
 	) {
 		if who == new_who {
 			defensive!("Should not try to swap with self");
-			return
+			return;
 		}
 		if Claimant::<T, I>::contains_key(new_who) {
 			defensive!("Should not try to overwrite existing claimant");
-			return
+			return;
 		}
 
 		let Some(claimant) = Claimant::<T, I>::take(who) else {
