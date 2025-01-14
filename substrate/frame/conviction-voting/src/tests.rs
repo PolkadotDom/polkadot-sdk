@@ -29,6 +29,7 @@ use super::*;
 use crate as pallet_conviction_voting;
 
 type Block = frame_system::mocking::MockBlock<Test>;
+type VotingBlockNumberProvider = <Test as Config>::BlockNumberProvider;
 
 frame_support::construct_runtime!(
 	pub enum Test
@@ -139,7 +140,7 @@ impl Polling<TallyOf<Test>> for TestPolls {
 			Some(Ongoing(..)) => {},
 			_ => return Err(()),
 		}
-		let now = frame_system::Pallet::<Test>::block_number();
+		let now = VotingBlockNumberProvider::current_block_number();
 		polls.insert(index, Completed(now, approved));
 		Polls::set(polls);
 		Ok(())
@@ -154,6 +155,7 @@ impl Config for Test {
 	type WeightInfo = ();
 	type MaxTurnout = frame_support::traits::TotalIssuanceOf<Balances, Self::AccountId>;
 	type Polls = TestPolls;
+	type BlockNumberProvider = System;
 }
 
 pub fn new_test_ext() -> sp_io::TestExternalities {
@@ -164,7 +166,7 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 	.assimilate_storage(&mut t)
 	.unwrap();
 	let mut ext = sp_io::TestExternalities::new(t);
-	ext.execute_with(|| System::set_block_number(1));
+	ext.execute_with(|| VotingBlockNumberProvider::set_block_number(1));
 	ext
 }
 
@@ -177,12 +179,12 @@ fn params_should_work() {
 }
 
 fn next_block() {
-	System::set_block_number(System::block_number() + 1);
+	VotingBlockNumberProvider::set_block_number(VotingBlockNumberProvider::current_block_number() + 1);
 }
 
 #[allow(dead_code)]
 fn run_to(n: u64) {
-	while System::block_number() < n {
+	while VotingBlockNumberProvider::current_block_number() < n {
 		next_block();
 	}
 }
