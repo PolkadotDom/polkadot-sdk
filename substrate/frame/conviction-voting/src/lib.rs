@@ -285,7 +285,7 @@ pub mod pallet {
 
 		/// Undelegate the voting power of the sending account for a particular class of polls.
 		///
-		/// Tokens may be unlocked following once an amount of time consistent with the lock period
+		/// Tokens may be unlocked once an amount of time consistent with the lock period
 		/// of the conviction with which the delegation was issued has passed.
 		///
 		/// The dispatch origin of this call must be _Signed_ and the signing account must be
