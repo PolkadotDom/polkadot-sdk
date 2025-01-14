@@ -99,7 +99,11 @@ pub mod pallet {
 	use sp_runtime::BoundedVec;
 	use sp_runtime::traits::BlockNumberProvider;
 
+	/// The in-code storage version.
+	const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+
 	#[pallet::pallet]
+	#[pallet::storage_version(STORAGE_VERSION)]
 	pub struct Pallet<T, I = ()>(_);
 
 	#[pallet::config]
