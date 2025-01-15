@@ -50,6 +50,11 @@ mod v1 {
 
         fn on_runtime_upgrade() -> frame_support::weights::Weight {
             let mut transactions = 0;
+
+            // VotingFor stores block number as a PriorLock.
+
+            // ClassLocksFor does not appear to have any moment information.
+
             T::DbWeight::get().reads_writes(transactions, transactions)
         }
 
