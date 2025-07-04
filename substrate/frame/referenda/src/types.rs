@@ -136,6 +136,27 @@ pub struct Deposit<AccountId, Balance> {
 	pub amount: Balance,
 }
 
+#[derive(
+	Encode,
+	Decode,
+	DecodeWithMemTracking,
+	Clone,
+	PartialEq,
+	Eq,
+	RuntimeDebug,
+	TypeInfo,
+	MaxEncodedLen,
+)]
+pub struct AggregatedDeposit<AccountId, Balance> 
+{
+	/// The total amount currently deposited.
+	pub sum: Balance,
+	/// A list of contributors and their amounts to the deposit.
+	/// 
+	/// The size of this vector is should be bound by the runtime logic.
+	pub contributors: Vec<Deposit<AccountId, Balance>>,
+}
+
 pub const DEFAULT_MAX_TRACK_NAME_LEN: usize = 25;
 
 /// Helper structure to treat a `[u8; N]` array as a string.
@@ -198,6 +219,10 @@ pub struct TrackDetails<Balance, Moment, Name> {
 	pub max_deciding: u32,
 	/// Amount that must be placed on deposit before a decision can be made.
 	pub decision_deposit: Balance,
+	/// The maximum amount of contributors to a referendum's decision deposit.
+	pub max_contributors: u32,
+	/// The minimum amount a contributor can add to a referendum's decision deposit.
+	pub min_contribution: Balance,
 	/// Amount of time this must be submitted for before a decision can be made.
 	pub prepare_period: Moment,
 	/// Amount of time that a decision may take to be approved prior to cancellation.
@@ -301,7 +326,8 @@ pub struct ReferendumStatus<
 	Tally: Eq + PartialEq + Debug + Encode + Decode + TypeInfo + Clone,
 	AccountId: Eq + PartialEq + Debug + Encode + Decode + TypeInfo + Clone,
 	ScheduleAddress: Eq + PartialEq + Debug + Encode + Decode + TypeInfo + Clone,
-> {
+	> 
+{
 	/// The track of this referendum.
 	pub track: TrackId,
 	/// The origin for this referendum.
@@ -316,7 +342,9 @@ pub struct ReferendumStatus<
 	/// The deposit reserved for the submission of this referendum.
 	pub submission_deposit: Deposit<AccountId, Balance>,
 	/// The deposit reserved for this referendum to be decided.
-	pub decision_deposit: Option<Deposit<AccountId, Balance>>,
+	/// 
+	/// Can be contributed to by multiple accounts.
+	pub decision_deposit: AggregatedDeposit<AccountId, Balance>,
 	/// The status of a decision being made. If `None`, it has not entered the deciding period.
 	pub deciding: Option<DecidingStatus<Moment>>,
 	/// The current tally of votes in this referendum.
@@ -326,6 +354,8 @@ pub struct ReferendumStatus<
 	/// The next scheduled wake-up, if `Some`.
 	pub alarm: Option<(Moment, ScheduleAddress)>,
 }
+
+// okay it looks like
 
 /// Info regarding a referendum, present or past.
 #[derive(
@@ -348,7 +378,8 @@ pub enum ReferendumInfo<
 	Tally: Eq + PartialEq + Debug + Encode + Decode + TypeInfo + Clone,
 	AccountId: Eq + PartialEq + Debug + Encode + Decode + TypeInfo + Clone,
 	ScheduleAddress: Eq + PartialEq + Debug + Encode + Decode + TypeInfo + Clone,
-> {
+> 
+{
 	/// Referendum has been submitted and is being voted on.
 	Ongoing(
 		ReferendumStatus<
@@ -363,13 +394,13 @@ pub enum ReferendumInfo<
 		>,
 	),
 	/// Referendum finished with approval. Submission deposit is held.
-	Approved(Moment, Option<Deposit<AccountId, Balance>>, Option<Deposit<AccountId, Balance>>),
+	Approved(Moment, Option<Deposit<AccountId, Balance>>, Option<AggregatedDeposit<AccountId, Balance>>),
 	/// Referendum finished with rejection. Submission deposit is held.
-	Rejected(Moment, Option<Deposit<AccountId, Balance>>, Option<Deposit<AccountId, Balance>>),
+	Rejected(Moment, Option<Deposit<AccountId, Balance>>, Option<AggregatedDeposit<AccountId, Balance>>),
 	/// Referendum finished with cancellation. Submission deposit is held.
-	Cancelled(Moment, Option<Deposit<AccountId, Balance>>, Option<Deposit<AccountId, Balance>>),
+	Cancelled(Moment, Option<Deposit<AccountId, Balance>>, Option<AggregatedDeposit<AccountId, Balance>>),
 	/// Referendum finished and was never decided. Submission deposit is held.
-	TimedOut(Moment, Option<Deposit<AccountId, Balance>>, Option<Deposit<AccountId, Balance>>),
+	TimedOut(Moment, Option<Deposit<AccountId, Balance>>, Option<AggregatedDeposit<AccountId, Balance>>),
 	/// Referendum finished with a kill.
 	Killed(Moment),
 }
@@ -388,10 +419,10 @@ impl<
 {
 	/// Take the Decision Deposit from `self`, if there is one. Returns an `Err` if `self` is not
 	/// in a valid state for the Decision Deposit to be refunded.
-	pub fn take_decision_deposit(&mut self) -> Result<Option<Deposit<AccountId, Balance>>, ()> {
+	pub fn take_decision_deposit(&mut self) -> Result<Option<AggregatedDeposit<AccountId, Balance>>, ()> {
 		use ReferendumInfo::*;
 		match self {
-			Ongoing(x) if x.decision_deposit.is_none() => Ok(None),
+			Ongoing(x) if x.decision_deposit.contributors.len() == 0 => Ok(None),
 			// Cannot refund deposit if Ongoing as this breaks assumptions.
 			Ongoing(_) => Err(()),
 			Approved(_, _, d) | Rejected(_, _, d) | TimedOut(_, _, d) | Cancelled(_, _, d) =>

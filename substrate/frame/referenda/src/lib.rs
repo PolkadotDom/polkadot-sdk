@@ -93,6 +93,8 @@ pub mod migration;
 mod types;
 pub mod weights;
 
+use crate::types::AggregatedDeposit;
+
 use self::branch::{BeginDecidingBranch, OneFewerDecidingBranch, ServiceBranch};
 pub use self::{
 	pallet::*,
@@ -241,6 +243,8 @@ pub mod pallet {
 							name: StringLike(info.name),
 							max_deciding: info.max_deciding,
 							decision_deposit: info.decision_deposit,
+							min_contribution: info.min_contribution,
+							max_contributors: info.max_contributors,
 							prepare_period: info.prepare_period,
 							decision_period: info.decision_period,
 							confirm_period: info.confirm_period,
@@ -410,6 +414,15 @@ pub mod pallet {
 			/// Preimage hash.
 			hash: T::Hash,
 		},
+		/// A decision deposit has been contributed to.
+		PartialDecisionDepositPlaced {
+			/// Index of the referendum.
+			index: ReferendumIndex,
+			/// The account who placed the partial deposit.
+			who: T::AccountId,
+			/// The amount placed by the account.
+			amount: BalanceOf<T, I>,
+		},
 	}
 
 	#[pallet::error]
@@ -442,6 +455,10 @@ pub mod pallet {
 		PreimageNotExist,
 		/// The preimage is stored with a different length than the one provided.
 		PreimageStoredWithDifferentLength,
+		/// The attempted decision deposit contribution is less than the minimum allowed.
+		ContributionUnderMinimum,
+		/// The maximum amount of contributors to a decision deposit has been reached.
+		MaxContributorsReached,
 	}
 
 	#[pallet::hooks]
@@ -536,15 +553,19 @@ pub mod pallet {
 		) -> DispatchResultWithPostInfo {
 			let who = ensure_signed(origin)?;
 			let mut status = Self::ensure_ongoing(index)?;
-			ensure!(status.decision_deposit.is_none(), Error::<T, I>::HasDeposit);
+
 			let track = T::Tracks::info(status.track).ok_or(Error::<T, I>::NoTrack)?;
-			status.decision_deposit =
-				Some(Self::take_deposit(who.clone(), track.decision_deposit)?);
+			ensure!(status.decision_deposit.sum < track.decision_deposit, Error::<T, I>::HasDeposit);
+			let amount_needed = track.decision_deposit.saturating_sub(status.decision_deposit.sum);
+			let deposit = Self::take_deposit(who.clone(), amount_needed)?;
+			status.decision_deposit.contributors.push(deposit);
+			status.decision_deposit.sum = status.decision_deposit.sum.saturating_add(amount_needed);
+
 			let now = T::BlockNumberProvider::current_block_number();
 			let (info, _, branch) = Self::service_referendum(now, index, status);
 			ReferendumInfoFor::<T, I>::insert(index, info);
 			let e =
-				Event::<T, I>::DecisionDepositPlaced { index, who, amount: track.decision_deposit };
+				Event::<T, I>::DecisionDepositPlaced { index, who, amount: amount_needed };
 			Self::deposit_event(e);
 			Ok(branch.weight_of_deposit::<T, I>().into())
 		}
@@ -565,18 +586,12 @@ pub mod pallet {
 			ensure_signed_or_root(origin)?;
 			let mut info =
 				ReferendumInfoFor::<T, I>::get(index).ok_or(Error::<T, I>::BadReferendum)?;
-			let deposit = info
+			let deposits = info
 				.take_decision_deposit()
 				.map_err(|_| Error::<T, I>::Unfinished)?
 				.ok_or(Error::<T, I>::NoDeposit)?;
-			Self::refund_deposit(Some(deposit.clone()));
+			Self::refund_aggregate_deposit(index, deposits);
 			ReferendumInfoFor::<T, I>::insert(index, info);
-			let e = Event::<T, I>::DecisionDepositRefunded {
-				index,
-				who: deposit.who,
-				amount: deposit.amount,
-			};
-			Self::deposit_event(e);
 			Ok(())
 		}
 
@@ -599,7 +614,7 @@ pub mod pallet {
 			let info = ReferendumInfo::Cancelled(
 				T::BlockNumberProvider::current_block_number(),
 				Some(status.submission_deposit),
-				status.decision_deposit,
+				Some(status.decision_deposit),
 			);
 			ReferendumInfoFor::<T, I>::insert(index, info);
 			Ok(())
@@ -621,8 +636,8 @@ pub mod pallet {
 			}
 			Self::note_one_fewer_deciding(status.track);
 			Self::deposit_event(Event::<T, I>::Killed { index, tally: status.tally });
-			Self::slash_deposit(Some(status.submission_deposit.clone()));
-			Self::slash_deposit(status.decision_deposit.clone());
+			Self::slash_deposit(status.submission_deposit.clone());
+			Self::slash_aggregate_deposit(status.decision_deposit);
 			Self::do_clear_metadata(index);
 			let info = ReferendumInfo::Killed(T::BlockNumberProvider::current_block_number());
 			ReferendumInfoFor::<T, I>::insert(index, info);
@@ -707,14 +722,8 @@ pub mod pallet {
 				.take_submission_deposit()
 				.map_err(|_| Error::<T, I>::BadStatus)?
 				.ok_or(Error::<T, I>::NoDeposit)?;
-			Self::refund_deposit(Some(deposit.clone()));
+			Self::refund_deposit(index, deposit.clone());
 			ReferendumInfoFor::<T, I>::insert(index, info);
-			let e = Event::<T, I>::SubmissionDepositRefunded {
-				index,
-				who: deposit.who,
-				amount: deposit.amount,
-			};
-			Self::deposit_event(e);
 			Ok(())
 		}
 
@@ -750,6 +759,57 @@ pub mod pallet {
 				Self::do_clear_metadata(index);
 				Ok(())
 			}
+		}
+
+		/// Contribute partially to the Decision Deposit for a referendum.
+		///
+		/// - `origin`: must be `Signed` and the account must have the amount to be deposited.
+		/// - `index`: The index of the submitted referendum whose Decision Deposit is yet to be
+		///   fulfilled.
+		/// - `origin`: must be `Signed` and the account must have the amount to be deposited.
+		///
+		/// Emits `DecisionDepositPlaced`.
+		#[pallet::call_index(9)]
+		#[pallet::weight(ServiceBranch::max_weight_of_partial_deposit::<T, I>())]
+		pub fn place_partial_decision_deposit(
+			origin: OriginFor<T>,
+			index: ReferendumIndex,
+			amount: BalanceOf<T>
+		) -> DispatchResultWithPostInfo {
+			// Basic checks.
+			let who = ensure_signed(origin)?;
+			let mut status = Self::ensure_ongoing(index)?;
+
+			// Specific checks.
+			let track = T::Tracks::info(status.track).ok_or(Error::<T, I>::NoTrack)?;
+			ensure!(amount >= track.min_contribution, Error::<T, I>::ContributionUnderMinimum);
+			ensure!(status.decision_deposit.sum < track.decision_deposit, Error::<T, I>::HasDeposit);
+
+			// Calculate final amount.
+			let remaining = track.decision_deposit.saturating_sub(status.decision_deposit.sum);
+			let final_amount = amount.min(remaining);
+
+			// Add depositor, leave room for one last depositor to prevent griefing.
+			ensure!(status.decision_deposit.contributors.len() < track.max_contributors - 1, Error::<T, I>::MaxContributorsReached);
+			let deposit = Self::take_deposit(who.clone(), final_amount)?;
+			status.decision_deposit.contributors
+				.push(deposit);
+			status.decision_deposit.sum = status.decision_deposit.sum.saturating_add(final_amount);
+			
+			// Possibly service referendum.
+			let mut actual_weight = ServiceBranch::min_weight_of_partial_deposit::<T, I>();
+			if status.decision_deposit.sum >= track.decision_deposit {
+				let now = T::BlockNumberProvider::current_block_number();
+				let (info, _, branch) = Self::service_referendum(now, index, status);
+				ReferendumInfoFor::<T, I>::insert(index, info);
+				actual_weight = branch.weight_of_deposit::<T, I>().into();
+			}
+			
+			// Deposit event and return actual weight used.
+			let e =
+				Event::<T, I>::PartialDecisionDepositPlaced { index, who, amount: final_amount };
+			Self::deposit_event(e);
+			Ok(actual_weight)
 		}
 	}
 }
@@ -1141,7 +1201,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 					TrackQueue::<T, I>::insert(status.track, queue);
 				} else {
 					// Are we ready for deciding?
-					branch = if status.decision_deposit.is_some() {
+					branch = if status.decision_deposit.sum >= track.decision_deposit {
 						let prepare_end = status.submitted.saturating_add(track.prepare_period);
 						if now >= prepare_end {
 							let (maybe_alarm, branch) =
@@ -1169,7 +1229,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 						ReferendumInfo::TimedOut(
 							now,
 							Some(status.submission_deposit),
-							status.decision_deposit,
+							Some(status.decision_deposit),
 						),
 						true,
 						ServiceBranch::TimedOut,
@@ -1201,7 +1261,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 								ReferendumInfo::Approved(
 									now,
 									Some(status.submission_deposit),
-									status.decision_deposit,
+									Some(status.decision_deposit),
 								),
 								true,
 								ServiceBranch::Approved,
@@ -1226,7 +1286,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 							ReferendumInfo::Rejected(
 								now,
 								Some(status.submission_deposit),
-								status.decision_deposit,
+								Some(status.decision_deposit),
 							),
 							true,
 							ServiceBranch::Rejected,
@@ -1293,19 +1353,35 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 		Ok(Deposit { who, amount })
 	}
 
-	/// Return a deposit, if `Some`.
-	fn refund_deposit(deposit: Option<Deposit<T::AccountId, BalanceOf<T, I>>>) {
-		if let Some(Deposit { who, amount }) = deposit {
-			T::Currency::unreserve(&who, amount);
+	/// Refund all who contributed to an aggregated deposit.
+	fn refund_aggregate_deposit(ref_index: ReferendumIndex, deposits: AggregatedDeposit<T::AccountId, BalanceOf<T, I>>) {
+		for deposit in desposits {
+			Self::refund_deposit(ref_index, deposit.clone());
 		}
 	}
 
-	/// Slash a deposit, if `Some`.
-	fn slash_deposit(deposit: Option<Deposit<T::AccountId, BalanceOf<T, I>>>) {
-		if let Some(Deposit { who, amount }) = deposit {
-			T::Slash::on_unbalanced(T::Currency::slash_reserved(&who, amount).0);
-			Self::deposit_event(Event::<T, I>::DepositSlashed { who, amount });
+	/// Return a deposit.
+	fn refund_deposit(ref_index: ReferendumIndex, deposit: Deposit<T::AccountId, BalanceOf<T, I>>) {
+		T::Currency::unreserve(deposit.who, deposit.amount);
+		let e = Event::<T, I>::DecisionDepositRefunded {
+			index: ref_index,
+			who: deposit.who,
+			amount: deposit.amount,
+		};
+		Self::deposit_event(e);
+	}
+
+	/// Slash all who contributed to an aggregated deposit.
+	fn slash_aggregate_deposit(deposits: AggregatedDeposit<T::AccountId, BalanceOf<T, I>>) {
+		for deposit in desposits {
+			Self::slash_deposit(deposit.clone());
 		}
+	}
+
+	/// Slash a deposit.
+	fn slash_deposit(deposit: Deposit<T::AccountId, BalanceOf<T, I>>) {
+		T::Slash::on_unbalanced(T::Currency::slash_reserved(deposit.who, deposit.amount).0);
+		Self::deposit_event(Event::<T, I>::DepositSlashed { who: deposit.who, amount: deposit.amount });
 	}
 
 	/// Determine whether the given `tally` would result in a referendum passing at `elapsed` blocks
