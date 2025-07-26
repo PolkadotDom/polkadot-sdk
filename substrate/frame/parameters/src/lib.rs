@@ -122,7 +122,7 @@ use frame_support::pallet_prelude::*;
 use frame_system::pallet_prelude::*;
 
 use frame_support::traits::{
-	dynamic_params::{AggregatedKeyValue, IntoKey, Key, RuntimeParameterStore, TryIntoKey},
+	dynamic_params::{AggregatedKeyValue, IntoKey, Key, RuntimeParameterStore, TryIntoKey, ParameterPreCheck},
 	EnsureOriginWithArg,
 };
 
@@ -156,6 +156,12 @@ pub mod pallet {
 		/// Usually created by [`frame_support::dynamic_params`] or equivalent.
 		#[pallet::no_default_bounds]
 		type RuntimeParameters: AggregatedKeyValue;
+
+		/// The checks to run on a new parameter value before setting.
+		/// 
+		/// To be used as a final security measure.
+		#[pallet::no_default_bounds]
+		type PreCheck: ParameterPreCheck<KeyOf<Self>, ValueOf<Self>>;
 
 		/// The origin which may update a parameter.
 		///
@@ -207,6 +213,8 @@ pub mod pallet {
 			let (key, new) = key_value.into_parts();
 			T::AdminOrigin::ensure_origin(origin, &key)?;
 
+			T::PreCheck::check(&key, &new)?;
+
 			let mut old = None;
 			Parameters::<T>::mutate(&key, |v| {
 				old = v.clone();
@@ -235,6 +243,8 @@ pub mod pallet {
 			type RuntimeEvent = ();
 			#[inject_runtime_type]
 			type RuntimeParameters = ();
+
+			type PreCheck = ();
 
 			type AdminOrigin = frame_support::traits::AsEnsureOriginWithArg<
 				frame_system::EnsureRoot<Self::AccountId>,

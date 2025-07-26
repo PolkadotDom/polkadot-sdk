@@ -22,6 +22,12 @@
 
 use codec::MaxEncodedLen;
 use frame_support::Parameter;
+use sp_runtime::DispatchResult;
+
+// what is it that I want with the pre_check?
+// can inject a function that does some arbitrary computation on the incoming parameter
+// I'd like to ensure it's read-only
+// 
 
 /// A dynamic parameter store across an aggregated KV type.
 pub trait RuntimeParameterStore {
@@ -104,6 +110,20 @@ where
 	{
 		PS::get::<KV, K>(key)
 	}
+}
+
+/// A trait to check a parameter before it is set.
+pub trait ParameterPreCheck<Key, Value> {
+    /// Check the parameter.
+    ///
+    /// To be used as a final security measure.
+    fn check(key: &Key, new_value: &Option<Value>) -> DispatchResult;
+}
+
+impl<Key, Value> ParameterPreCheck<Key, Value> for () {
+    fn check(_key: &Key, _new_value: &Option<Value>) -> DispatchResult {
+        Ok(())
+    }
 }
 
 // workaround for rust bug https://github.com/rust-lang/rust/issues/51445
